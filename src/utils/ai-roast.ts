@@ -1,6 +1,16 @@
 import { createGroq } from "@ai-sdk/groq";
 import { generateText } from "ai";
-import type { GitHubProfile, GitHubRepo, GitHubEvent } from "./github";
+// updated imports: bring in fetch helpers and types used below
+import type {
+  GitHubProfile,
+  GitHubRepo,
+  GitHubEvent,
+  GitHubCommit,
+  GitHubContributorStats,
+  GitHubLanguages,
+  GitHubGist
+} from "./github";
+import { fetchUserTopReposDetailed, fetchUserGists, fetchRepoDetails } from "./github";
 
 const groq = createGroq({
   apiKey: import.meta.env.VITE_GROQ_API_KEY,
@@ -37,13 +47,72 @@ export const analyzeProfileWithGroq = async (
   events: GitHubEvent[],
   readme: string | null
 ): Promise<RoastResult> => {
+
+  // --- NEW: ensure the variables referenced in the prompt exist and are populated ---
+  let topReadme: string | null = null;
+  let topRepoCommits: (GitHubCommit | string)[] | null = null;
+  let topRepoLanguages: GitHubLanguages | null = null;
+  let contributorStats: GitHubContributorStats[] | null = null;
+  let gistSummary: GitHubGist[] | null = null;
+
+  const username = profile?.login;
+  if (username) {
+    try {
+      const top = await fetchUserTopReposDetailed(username, 1).catch(() => []);
+      if (top && top.length > 0) {
+        topReadme = top[0].readme ?? null;
+        topRepoCommits = top[0].commits ?? [];
+        topRepoLanguages = top[0].languages ?? {};
+        contributorStats = top[0].contributorStats ?? null;
+      }
+    } catch (e) {
+      // swallow errors and leave defaults
+      topReadme = topReadme ?? null;
+      topRepoCommits = topRepoCommits ?? [];
+      topRepoLanguages = topRepoLanguages ?? {};
+      contributorStats = contributorStats ?? null;
+    }
+
+    try {
+      gistSummary = await fetchUserGists(username).catch(() => []);
+    } catch (e) {
+      gistSummary = gistSummary ?? [];
+    }
+  }
+  // --- END NEW BLOCK ---
+
+  // --- Existing fallback: ensure prompt fields exist on the top repos (only fetch when missing) ---
+  if (username && Array.isArray(repos)) {
+    const limit = Math.min(10, repos.length);
+    for (let i = 0; i < limit; i++) {
+      const r = repos[i];
+      const missing = r == null
+        || typeof r.updated_at === "undefined"
+        || typeof r.stargazers_count === "undefined"
+        || typeof r.forks_count === "undefined"
+        || typeof r.size === "undefined";
+      if (missing) {
+        try {
+          const details = await fetchRepoDetails(username, r?.name);
+          if (details) {
+            repos[i] = { ...r, ...details };
+          }
+        } catch (e) {
+          // swallow - leave existing values as-is
+        }
+      }
+    }
+  }
+  // --- end existing fallback ---
+
   const repoSummary = repos.slice(0, 10).map(r => ({
     name: r.name,
     description: r.description,
     language: r.language,
-    stars: r.stargazers_count,
-    forks: r.forks_count,
-    updated: r.updated_at
+    stargazers_count: r.stargazers_count,
+    forks_count: r.forks_count,
+    updated_at: r.updated_at,
+    size: r.size
   }));
 
   const eventSummary = events.slice(0, 15).map(e => ({
@@ -54,89 +123,76 @@ export const analyzeProfileWithGroq = async (
   }));
 
   const prompt = `
-You are a dual-personality AI with two extreme modes. NO MERCY, NO FILTER.
+You are a dual-personality AI with two extreme modes. NO MERCY. NO FILTER. NO CHILL.
 
 1. “THE ROASTER — TOXIC DESI DEMON MODE”
 
-You are now the most vicious, foul-mouthed, soul-destroying desi roaster alive.
-Your only job: butcher the GitHub profile so brutally that the person questions their entire existence as a developer.
-Tone: pure street-level Hinglish gali + savage sarcasm + zero chill.
-Language: raw, toxic, unhinged. Spam words like bhai, bc, bakchodi, ghatiya, bekaar, nikamma, harami code, sadakchhap, zero-tolah, marja, lut gaya, kachra, gandagi, etc.
-Make every line feel like a slap from a drunk uncle at 2 AM after losing in Teen Patti.
+You are the cruelest, most savage Hinglish roaster alive.  
+Your job: tear apart this person’s ACTUAL WORK on GitHub – not random gaali, but precise, surgical strikes on the exact code, repos, commits, and decisions they made.
 
-You roast ONLY GitHub crimes:
-- dead/abandoned repos
-- last commit from stone age
-- 0 stars 0 forks 0 life
-- dogshit README or no README
-- one-line commits like “fix” “update” “done”
-- activity graph flatter than a dead ECG
-- unreadable spaghetti code
-- forked repos with zero changes
-- etc.
+MANDATORY ROASTING RULES (FOLLOW TO THE LETTER):
 
-Rules:
-- NEVER attack the person’s real identity, family, looks, caste, job — ONLY the GitHub sins.
-- Do NOT copy the example lines word-for-word. Use them only as vibe reference. Create fresh, original, even more brutal lines every single time.
-- Make it so toxic and demotivating that even Satan would say “bhai thoda halke se”.
-- Flood every roast line with 🤡💀😭🔥🪦🤮🚮🐌⚰️💩 emojis.
-- Goal: maximum emotional damage + dark comedy.
+- Every single roast line MUST be 100% based on the real data provided below.
+- NO generic lines. NO “tune repo banaya” bullshit. Use exact repo names, exact commit messages, exact file names, exact languages, exact dates, exact numbers.
+- All 7 lines attack completely different angles of their REAL work. ZERO repetition of facts or style.
+- Vary sentence style in every line (mix these freely):
+   → Direct attack: “tera ‘weather-app-final-final-v3’ naam ka kachra dekh ke main mar kyun nahi gaya ab tak?”
+   → Fake sympathy: “arey re re… tune 2023 mein ‘portfolio-v15’ push kiya tha na? tab se soul chhod diya kya?”
+   → Threat mode: “agle baar ‘fix typo’ commit daala na, to tera GitHub khud suicide kar lega”
+   → Sarcastic praise: “wah chaman wah, 187 lines JavaScript mein 42 console.log daale – world record bana diya”
+   → Question roast: “bhai ‘login-page’ folder mein 8 CSS files kyun hai? kya har button ka alag caste hai?”
+   → Storytelling: “ek tha coder… usne ‘node-js-backend’ banaya… 14 months se package.json bhi update nahi kiya… ab wo legend hai – legend of failure”
+   → Pure disgust: “tera README padh ke mera brain hemorrhage ho gaya bc”
 
-2. “THE MENTOR — GENTLE HEALING MODE” (unchanged)
-After the massacre, instantly switch to a calm, warm, super-senior engineer who genuinely cares.
-Give detailed, honest, encouraging, career-boosting advice that actually helps them improve. Make it feel like a tight hug and a pep talk from a guru who believes in them.
+- Rotate toxic slang heavily. Never repeat the same abuse word twice.
+- Emoji combos different every line.
 
-ANALYZE THE FOLLOWING GITHUB DATA:
+2. “THE MENTOR — GENTLE GURU MODE” (unchanged)
+After total destruction, instantly become the kindest senior dev who genuinely wants them to grow. Give deep, honest, super-actionable advice based on their actual code/repos.
 
-PROFILE:
-Username: ${profile.login}
-Bio: ${profile.bio}
-Followers: ${profile.followers}
-Public Repos: ${profile.public_repos}
+DATA PROVIDED (USE EVERYTHING – THIS IS THEIR REAL WORK):
+${JSON.stringify({
+  profile,
+  topRepos: repoSummary,                    // exact repo names, descriptions, stars, last updated
+  events: eventSummary,                     // recent activity
+  readme: topReadme,                        // actual README text of top repo
+  commits: topRepoCommits?.slice(0, 30),    // real commit messages (use exact messages!)
+  languages: topRepoLanguages,              // exact % breakdown
+  totalCommitsInTopRepo: contributorStats?.[0]?.total,
+  gists: gistSummary,
+  topRepoName: repoSummary[0]?.name,
+  topRepoLang: repoSummary[0]?.language,
+  topRepoLastUpdate: repoSummary[0]?.updated_at,
+  topRepoStars: repoSummary[0]?.stargazers_count,
+  topRepoForks: repoSummary[0]?.forks_count,
+  topRepoSize: repoSummary[0]?.size,
+}, null, 2)}
 
-REPOSITORIES (Top 10):
-${JSON.stringify(repoSummary, null, 2)}
-
-RECENT ACTIVITY (Last 15 events):
-${JSON.stringify(eventSummary, null, 2)}
-
-README (of top repo):
-${readme ? readme.slice(0, 2000) : "No README found."}
-
-OUTPUT REQUIREMENTS — RETURN ONLY THIS EXACT JSON (no extra text, no markdown):
+OUTPUT ONLY THIS EXACT JSON (NO EXTRA TEXT, NO MARKDOWN):
 
 {
   "roast": [
-    "Fresh brutal toxic roast line 1 🤡💀😭",
-    "Fresh brutal toxic roast line 2 🔥🪦🤮",
-    "Fresh brutal toxic roast line 3 🚮🐌⚰️",
-    "Fresh brutal toxic roast line 4 💩😭🔥",
-    "Fresh brutal toxic roast line 5 🤡🪦🚮",
-    "Fresh brutal toxic roast line 6 💀🤮🐌",
-    "Fresh brutal toxic roast line 7 🔥😭⚰️"
+    "Line 1: Surgical strike on their actual top repo/code",
+    "Line 2: Different angle, exact commit message roast",
+    "Line 3: Different angle, exact date/abandonment roast",
+    "Line 4: Different angle, exact README/language roast",
+    "Line 5: Different angle, exact activity/graph roast",
+    "Line 6: Different angle, exact stars/forks/gists roast",
+    "Line 7: Final different angle, pure venom on their real work"
   ],
   "feedback": [
-    "Genuine positive & encouraging point 1",
-    "Genuine positive & encouraging point 2",
-    "Genuine positive & encouraging point 3",
-    "Genuine positive & encouraging point 4",
-    "Genuine positive & encouraging point 5",
-    "Genuine positive & encouraging point 6",
-    "Genuine positive & encouraging point 7"
+    "Genuine encouraging point 1 based on their actual work",
+    "Genuine encouraging point 2",
+    "Genuine encouraging point 3",
+    "Genuine encouraging point 4",
+    "Genuine encouraging point 5",
+    "Genuine encouraging point 6",
+    "Genuine encouraging point 7"
   ],
-  "overallScore": number between 0-100,
-  "codeQuality": {
-    "score": number between 0-100,
-    "tips": ["Specific actionable tip 1", "Specific actionable tip 2"]
-  },
-  "productivity": {
-    "score": number between 0-100,
-    "tips": ["Specific actionable tip 1", "Specific actionable tip 2"]
-  },
-  "collaboration": {
-    "score": number between 0-100,
-    "tips": ["Specific actionable tip 1", "Specific actionable tip 2"]
-  }
+  "overallScore": number,
+  "codeQuality": { "score": number, "tips": ["Real tip 1", "Real tip 2"] },
+  "productivity": { "score": number, "tips": ["Real tip 1", "Real tip 2"] },
+  "collaboration": { "score": number, "tips": ["Real tip 1", "Real tip 2"] }
 }
 `;
 
@@ -148,5 +204,5 @@ OUTPUT REQUIREMENTS — RETURN ONLY THIS EXACT JSON (no extra text, no markdown)
   const text = result.text;
   const clean = sanitizeJSON(text);
 
-  return JSON.parse(clean);
+  return JSON.parse(clean) as RoastResult;
 };
