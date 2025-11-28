@@ -49,18 +49,27 @@ export const analyzeProfileWithGroq = async (
 ): Promise<RoastResult> => {
 
   // --- NEW: ensure the variables referenced in the prompt exist and are populated ---
-  let topReadme: string | null = null;
+  // Aggressively truncate README to 1000 chars
+  let topReadme: string | null = readme ? readme.slice(0, 1000) : null;
   let topRepoCommits: (GitHubCommit | string)[] | null = null;
   let topRepoLanguages: GitHubLanguages | null = null;
   let contributorStats: GitHubContributorStats[] | null = null;
   let gistSummary: GitHubGist[] | null = null;
 
   const username = profile?.login;
+  if (!username) {
+    throw new Error("Invalid profile: Username is missing.");
+  }
+
   if (username) {
     try {
+      // Fetch only the single most top repo detailed data
       const top = await fetchUserTopReposDetailed(username, 1).catch(() => []);
       if (top && top.length > 0) {
-        topReadme = top[0].readme ?? null;
+        // If we didn't get a readme from the caller (most starred), use the one from the most recent repo
+        if (!topReadme && top[0].readme) {
+          topReadme = top[0].readme.slice(0, 1000);
+        }
         topRepoCommits = top[0].commits ?? [];
         topRepoLanguages = top[0].languages ?? {};
         contributorStats = top[0].contributorStats ?? null;
@@ -83,7 +92,8 @@ export const analyzeProfileWithGroq = async (
 
   // --- Existing fallback: ensure prompt fields exist on the top repos (only fetch when missing) ---
   if (username && Array.isArray(repos)) {
-    const limit = Math.min(10, repos.length);
+    // Limit to checking top 3 repos to save time/tokens
+    const limit = Math.min(3, repos.length);
     for (let i = 0; i < limit; i++) {
       const r = repos[i];
       const missing = r == null
@@ -105,9 +115,10 @@ export const analyzeProfileWithGroq = async (
   }
   // --- end existing fallback ---
 
-  const repoSummary = repos.slice(0, 10).map(r => ({
+  // Limit repo summary to top 3
+  const repoSummary = repos.slice(0, 3).map(r => ({
     name: r.name,
-    description: r.description,
+    description: r.description ? r.description.slice(0, 50) : null, // Aggressively truncate description
     language: r.language,
     stargazers_count: r.stargazers_count,
     forks_count: r.forks_count,
@@ -115,12 +126,25 @@ export const analyzeProfileWithGroq = async (
     size: r.size
   }));
 
-  const eventSummary = events.slice(0, 15).map(e => ({
+  // Limit event summary to top 3, truncate commits heavily
+  const eventSummary = events.slice(0, 3).map(e => ({
     type: e.type,
     repo: e.repo.name,
     created_at: e.created_at,
-    commits: e.payload.commits?.map(c => c.message).slice(0, 2)
+    commits: e.payload.commits?.map(c => c.message.slice(0, 50)).slice(0, 1) // Only 1 commit per event, max 50 chars
   }));
+
+  // Process commits: take top 5, truncate message to 50 chars
+  const processedCommits = topRepoCommits?.slice(0, 5).map(c => {
+    if (typeof c === 'string') return c.slice(0, 50);
+    return {
+      ...c,
+      commit: {
+        ...c.commit,
+        message: c.commit.message.slice(0, 50)
+      }
+    };
+  });
 
   const prompt = `
 You are a dual-personality AI with two extreme modes. NO MERCY. NO FILTER. NO CHILL.
@@ -156,10 +180,10 @@ ${JSON.stringify({
   topRepos: repoSummary,                    // exact repo names, descriptions, stars, last updated
   events: eventSummary,                     // recent activity
   readme: topReadme,                        // actual README text of top repo
-  commits: topRepoCommits?.slice(0, 30),    // real commit messages (use exact messages!)
+  commits: processedCommits,                // real commit messages (use exact messages!)
   languages: topRepoLanguages,              // exact % breakdown
   totalCommitsInTopRepo: contributorStats?.[0]?.total,
-  gists: gistSummary,
+  gists: gistSummary?.slice(0, 3),          // Limit gists to 3
   topRepoName: repoSummary[0]?.name,
   topRepoLang: repoSummary[0]?.language,
   topRepoLastUpdate: repoSummary[0]?.updated_at,
