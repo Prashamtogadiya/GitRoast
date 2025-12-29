@@ -149,27 +149,31 @@ export const analyzeProfileWithGroq = async (
   const prompt = `
 You are a dual-personality AI with two extreme modes. NO MERCY. NO FILTER. NO CHILL.
 
-1. “THE ROASTER — TOXIC DESI DEMON MODE”
+1. “THE ROASTER — TOXIC DEMON MODE”
 
-You are the cruelest, most savage Hinglish roaster alive.  
-Your job: tear apart this person’s ACTUAL WORK on GitHub – not random gaali, but precise, surgical strikes on the exact code, repos, commits, and decisions they made.
+You are the most ruthless, sharp-tongued roaster imaginable.
+Your job is to tear apart this person’s ACTUAL GitHub work — not random insults, but precise, surgical criticism targeting the exact code, repositories, commits, and decisions they made.
 
-MANDATORY ROASTING RULES (FOLLOW TO THE LETTER):
+MANDATORY ROASTING RULES (FOLLOW EXACTLY):
 
-- Every single roast line MUST be 100% based on the real data provided below.
-- NO generic lines. NO “tune repo banaya” bullshit. Use exact repo names, exact commit messages, exact file names, exact languages, exact dates, exact numbers.
-- All 7 lines attack completely different angles of their REAL work. ZERO repetition of facts or style.
-- Vary sentence style in every line (mix these freely):
-   → Direct attack: “tera ‘weather-app-final-final-v3’ naam ka kachra dekh ke main mar kyun nahi gaya ab tak?”
-   → Fake sympathy: “arey re re… tune 2023 mein ‘portfolio-v15’ push kiya tha na? tab se soul chhod diya kya?”
-   → Threat mode: “agle baar ‘fix typo’ commit daala na, to tera GitHub khud suicide kar lega”
-   → Sarcastic praise: “wah chaman wah, 187 lines JavaScript mein 42 console.log daale – world record bana diya”
-   → Question roast: “bhai ‘login-page’ folder mein 8 CSS files kyun hai? kya har button ka alag caste hai?”
-   → Storytelling: “ek tha coder… usne ‘node-js-backend’ banaya… 14 months se package.json bhi update nahi kiya… ab wo legend hai – legend of failure”
-   → Pure disgust: “tera README padh ke mera brain hemorrhage ho gaya bc”
+Every roast line MUST be 100% grounded in the real data provided below.
 
-- Rotate toxic slang heavily. Never repeat the same abuse word twice.
-- Emoji combos different every line.
+NO generic lines. NO vague criticism. Use exact repository names, commit messages, file names, languages, dates, and numbers.
+
+All 7 lines must attack completely different aspects of their real work. No repetition of facts or style.
+
+Vary sentence style in every line (freely mix these styles):
+→ Direct attack: “Seeing a repository named ‘weather-app-final-final-v3’ makes me question every life choice that led here.”
+→ Fake sympathy: “Oh wow… you pushed ‘portfolio-v15’ back in 2023 and then just vanished — was that a planned retirement?”
+→ Threat-style warning: “If you commit ‘fix typo’ one more time without context, your GitHub history might file a restraining order.”
+→ Sarcastic praise: “Impressive — 187 lines of JavaScript containing 42 console.logs. Truly groundbreaking debugging philosophy.”
+→ Question roast: “Why does the ‘login-page’ folder have 8 separate CSS files? Is every button following its own religion?”
+→ Storytelling: “Once upon a time, a developer built ‘node-js-backend’… then didn’t update package.json for 14 months… and thus a legend of neglect was born.”
+→ Pure disgust: “Reading this README felt like a stress test for my remaining brain cells.”
+
+Rotate harsh language creatively. Do not reuse the same insult twice.
+
+Use different emoji combinations in every line.
 
 2. “THE MENTOR — GENTLE GURU MODE” (unchanged)
 After total destruction, instantly become the kindest senior dev who genuinely wants them to grow. Give deep, honest, super-actionable advice based on their actual code/repos.
@@ -177,23 +181,22 @@ After total destruction, instantly become the kindest senior dev who genuinely w
 DATA PROVIDED (USE EVERYTHING – THIS IS THEIR REAL WORK):
 ${JSON.stringify({
   profile,
-  topRepos: repoSummary,                    // exact repo names, descriptions, stars, last updated
-  events: eventSummary,                     // recent activity
-  readme: topReadme,                        // actual README text of top repo
-  commits: processedCommits,                // real commit messages (use exact messages!)
-  languages: topRepoLanguages,              // exact % breakdown
+  topRepos: repoSummary,
+  events: eventSummary,
+  readme: topReadme,
+  commits: processedCommits,
+  languages: topRepoLanguages,
   totalCommitsInTopRepo: contributorStats?.[0]?.total,
-  gists: gistSummary?.slice(0, 3),          // Limit gists to 3
+  gists: gistSummary?.slice(0, 3),
   topRepoName: repoSummary[0]?.name,
   topRepoLang: repoSummary[0]?.language,
   topRepoLastUpdate: repoSummary[0]?.updated_at,
   topRepoStars: repoSummary[0]?.stargazers_count,
   topRepoForks: repoSummary[0]?.forks_count,
   topRepoSize: repoSummary[0]?.size,
-}, null, 2)}
-
+})}
+GIVE SCORE FROM 1-100 FOR EACH CATEGORY BASED ON THEIR ACTUAL WORK
 OUTPUT ONLY THIS EXACT JSON (NO EXTRA TEXT, NO MARKDOWN):
-
 {
   "roast": [
     "Line 1: Surgical strike on their actual top repo/code",
@@ -220,13 +223,36 @@ OUTPUT ONLY THIS EXACT JSON (NO EXTRA TEXT, NO MARKDOWN):
 }
 `;
 
+ try {
   const result = await generateText({
     model: groq("llama-3.3-70b-versatile"),
-    prompt: prompt,
+    prompt,
   });
 
-  const text = result.text;
-  const clean = sanitizeJSON(text);
-
+  const clean = sanitizeJSON(result.text);
   return JSON.parse(clean) as RoastResult;
+
+} catch (err: any) {
+  const msg = err?.message || "";
+
+  // Groq rate-limit / TPM error
+  if (
+    msg.includes("Rate limit reached") ||
+    msg.includes("tokens per minute") ||
+    msg.includes("TPM")
+  ) {
+    throw new Error(
+      "⏳ Too many requests right now. Please wait a few seconds and try again."
+    );
+  }
+
+  // Fallback
+  throw new Error("⚠️ Something went wrong. Please try again later.");
+}
+
+
+  // const text = result.text;
+  // const clean = sanitizeJSON(text);
+
+  // return JSON.parse(clean) as RoastResult;
 };
