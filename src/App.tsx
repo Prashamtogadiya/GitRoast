@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Github, Flame } from 'lucide-react';
+import { Analytics } from '@vercel/analytics/react';
 import { SearchInput } from './components/SearchInput';
 import { ProfileCard } from './components/ProfileCard';
 import { RoastPanel } from './components/RoastPanel';
@@ -50,6 +51,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-dark-bg text-gray-100 p-4 md:p-8 font-body selection:bg-roast-500/30">
+      <Analytics />
       <div className="max-w-4xl mx-auto">
         <header className="text-center mb-12 pt-8">
           <motion.div
